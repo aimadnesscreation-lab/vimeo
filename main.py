@@ -75,8 +75,10 @@ def rewrite_m3u8(m3u8_obj):
     else:
         # Handle Initialization Segment (EXT-X-MAP)
         if m3u8_obj.segment_map:
-            for segment_map in m3u8_obj.segment_map:
-                if segment_map.uri:
+            # m3u8 library stores it as a single object, but let's be safe
+            maps = m3u8_obj.segment_map if isinstance(m3u8_obj.segment_map, list) else [m3u8_obj.segment_map]
+            for segment_map in maps:
+                if hasattr(segment_map, 'uri') and segment_map.uri:
                     original_uri = segment_map.absolute_uri
                     encoded_uri = urllib.parse.quote_plus(original_uri)
                     segment_map.uri = f"/proxy/segment?url={encoded_uri}"
