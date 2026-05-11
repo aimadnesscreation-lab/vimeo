@@ -49,17 +49,33 @@ async def extract_vimeo(url: str):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             
-            # Find HLS format
+            # Find the best HLS format (prefer master manifest or one with video)
             formats = info.get('formats', [])
             hls_url = None
+            
+            # 1. Try to find a master manifest (usually protocol is m3u8_native and no specific resolution)
             for f in formats:
-                if f.get('protocol') == 'm3u8_native' or f.get('ext') == 'mp4' and 'm3u8' in f.get('url', ''):
+                if f.get('protocol') == 'm3u8_native' and f.get('vcodec') != 'none' and f.get('acodec') != 'none':
+                    # This is likely a combined master manifest
                     hls_url = f.get('url')
-                    break
+                    if 'master.m3u8' in hls_url or 'manifest.m3u8' in hls_url:
+                        break
+            
+            # 2. Fallback to any HLS format that isn't audio-only
+            if not hls_url:
+                for f in formats:
+                    if (f.get('protocol') == 'm3u8_native' or 'm3u8' in f.get('url', '')) and f.get('vcodec') != 'none':
+                        hls_url = f.get('url')
+                        break
+            
+            # 3. Last resort fallback
+            if not hls_url:
+                hls_url = info.get('url')
             
             if not hls_url:
                 raise HTTPException(status_code=404, detail="HLS stream not found")
             
+            print(f"Selected HLS URL: {hls_url[:100]}...")
             video_id = info.get('id')
             stream_cache[video_id] = {
                 "hls_url": hls_url,
