@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vimeo Proxy Player</title>
+    <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            max-width: 800px;
+            width: 100%;
+        }
+        h1 {
+            color: #00adef;
+            text-align: center;
+        }
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        input[type="text"] {
+            flex-grow: 1;
+            padding: 12px;
+            border-radius: 4px;
+            border: 1px solid #333;
+            background-color: #1e1e1e;
+            color: white;
+            font-size: 16px;
+        }
+        button {
+            padding: 12px 24px;
+            background-color: #00adef;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button:hover {
+            background-color: #008ebf;
+        }
+        .video-container {
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background-color: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+        #my-video {
+            width: 100%;
+            height: 100%;
+        }
+        .info {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #1e1e1e;
+            border-radius: 4px;
+            display: none;
+        }
+        .loader {
+            display: none;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #00adef;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 2s linear infinite;
+            margin: 10px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Vimeo Proxy Player</h1>
+        <div class="input-group">
+            <input type="text" id="vimeo-url" placeholder="Enter Vimeo URL (e.g., https://vimeo.com/12345678)" value="">
+            <button id="load-btn">Load Video</button>
+        </div>
+        <div class="loader" id="loader"></div>
+        <div class="video-container">
+            <video id="my-video" class="video-js vjs-big-play-centered" controls preload="auto" data-setup="{}">
+                <p class="vjs-no-js">
+                    To view this video please enable JavaScript, and consider upgrading to a
+                    web browser that <a href="https://videojs.com/html5-video-support/" target="_blank">supports HTML5 video</a>
+                </p>
+            </video>
+        </div>
+        <div id="video-info" class="info">
+            <h3 id="video-title"></h3>
+            <p id="video-id-display"></p>
+        </div>
+    </div>
+
+    <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
+    <script>
+        const player = videojs('my-video');
+        const loadBtn = document.getElementById('load-btn');
+        const urlInput = document.getElementById('vimeo-url');
+        const loader = document.getElementById('loader');
+        const infoBox = document.getElementById('video-info');
+        const titleEl = document.getElementById('video-title');
+        const idEl = document.getElementById('video-id-display');
+
+        loadBtn.addEventListener('click', async () => {
+            const url = urlInput.value.trim();
+            if (!url) return alert('Please enter a Vimeo URL');
+
+            loader.style.display = 'block';
+            loadBtn.disabled = true;
+
+            try {
+                const response = await fetch(`/api/extract?url=${encodeURIComponent(url)}`);
+                if (!response.ok) throw new Error('Failed to extract video');
+
+                const data = await response.json();
+                
+                titleEl.textContent = data.title;
+                idEl.textContent = `ID: ${data.id}`;
+                infoBox.style.display = 'block';
+
+                player.src({
+                    src: data.proxy_url,
+                    type: 'application/x-mpegURL'
+                });
+                player.play();
+
+            } catch (err) {
+                console.error(err);
+                alert('Error: ' + err.message);
+            } finally {
+                loader.style.display = 'none';
+                loadBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
