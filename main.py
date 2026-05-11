@@ -60,6 +60,32 @@ async def extract_vimeo(url: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def rewrite_m3u8(m3u8_obj, base_proxy_url):
+    if m3u8_obj.is_variant:
+        for playlist in m3u8_obj.playlists:
+            original_uri = playlist.absolute_uri
+            encoded_uri = urllib.parse.quote_plus(original_uri)
+            playlist.uri = f"{base_proxy_url}/proxy/raw_manifest?url={encoded_uri}"
+        
+        for media in m3u8_obj.media:
+            if media.uri:
+                original_uri = media.absolute_uri
+                encoded_uri = urllib.parse.quote_plus(original_uri)
+                media.uri = f"{base_proxy_url}/proxy/raw_manifest?url={encoded_uri}"
+    else:
+        # Handle Initialization Segment (EXT-X-MAP)
+        if m3u8_obj.segment_map:
+            for segment_map in m3u8_obj.segment_map:
+                if segment_map.uri:
+                    original_uri = segment_map.absolute_uri
+                    encoded_uri = urllib.parse.quote_plus(original_uri)
+                    segment_map.uri = f"{base_proxy_url}/proxy/segment?url={encoded_uri}"
+
+        for segment in m3u8_obj.segments:
+            original_uri = segment.absolute_uri
+            encoded_uri = urllib.parse.quote_plus(original_uri)
+            segment.uri = f"{base_proxy_url}/proxy/segment?url={encoded_uri}"
+
 @app.get("/proxy/manifest/{video_id}")
 async def proxy_manifest(video_id: str, request: Request):
     hls_url = stream_cache.get(video_id)
@@ -72,22 +98,8 @@ async def proxy_manifest(video_id: str, request: Request):
             return Response(content=resp.content, status_code=resp.status_code)
         
         m3u8_obj = m3u8.loads(resp.text, uri=hls_url)
-        
-        # Base URL for the proxy
         base_proxy_url = str(request.base_url).rstrip('/')
-        
-        if m3u8_obj.is_variant:
-            for playlist in m3u8_obj.playlists:
-                # Rewrite variant playlist URLs
-                original_uri = playlist.absolute_uri
-                encoded_uri = urllib.parse.quote_plus(original_uri)
-                playlist.uri = f"{base_proxy_url}/proxy/raw_manifest?url={encoded_uri}"
-        else:
-            for segment in m3u8_obj.segments:
-                # Rewrite segment URLs
-                original_uri = segment.absolute_uri
-                encoded_uri = urllib.parse.quote_plus(original_uri)
-                segment.uri = f"{base_proxy_url}/proxy/segment?url={encoded_uri}"
+        rewrite_m3u8(m3u8_obj, base_proxy_url)
         
         return Response(content=m3u8_obj.dumps(), media_type="application/vnd.apple.mpegurl")
 
@@ -101,11 +113,7 @@ async def proxy_raw_manifest(url: str, request: Request):
         
         m3u8_obj = m3u8.loads(resp.text, uri=decoded_url)
         base_proxy_url = str(request.base_url).rstrip('/')
-        
-        for segment in m3u8_obj.segments:
-            original_uri = segment.absolute_uri
-            encoded_uri = urllib.parse.quote_plus(original_uri)
-            segment.uri = f"{base_proxy_url}/proxy/segment?url={encoded_uri}"
+        rewrite_m3u8(m3u8_obj, base_proxy_url)
             
         return Response(content=m3u8_obj.dumps(), media_type="application/vnd.apple.mpegurl")
 
