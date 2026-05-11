@@ -68,44 +68,51 @@ async def extract_vimeo(url: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def rewrite_url(url, is_manifest=False):
+    if not url:
+        return url
+    encoded_url = urllib.parse.quote_plus(url)
+    if is_manifest:
+        return f"/proxy/raw_manifest?url={encoded_url}"
+    else:
+        return f"/proxy/segment?url={encoded_url}"
+
 def rewrite_m3u8(m3u8_obj):
-    # Base rewrite for all types of manifests
-    if m3u8_obj.is_variant:
-        for playlist in m3u8_obj.playlists:
-            original_uri = playlist.absolute_uri
-            encoded_uri = urllib.parse.quote_plus(original_uri)
-            playlist.uri = f"/proxy/raw_manifest?url={encoded_uri}"
-        
-        for media in m3u8_obj.media:
-            if media.uri:
-                original_uri = media.absolute_uri
-                encoded_uri = urllib.parse.quote_plus(original_uri)
-                media.uri = f"/proxy/raw_manifest?url={encoded_uri}"
+    # Master Playlist tags
+    for playlist in m3u8_obj.playlists:
+        playlist.uri = rewrite_url(playlist.absolute_uri, is_manifest=True)
     
-    # Always check for segments and map, even in variants just in case
-    # Handle Initialization Segment (EXT-X-MAP)
+    for media in m3u8_obj.media:
+        if media.uri:
+            media.uri = rewrite_url(media.absolute_uri, is_manifest=True)
+
+    for iframe in m3u8_obj.iframe_playlists:
+        iframe.uri = rewrite_url(iframe.absolute_uri, is_manifest=True)
+
+    # Media Playlist tags
     if m3u8_obj.segment_map:
-        maps = m3u8_obj.segment_map if isinstance(m3u8_obj.segment_map, list) else [m3u8_obj.segment_map]
-        for sm in maps:
+        for sm in m3u8_obj.segment_map:
             if hasattr(sm, 'uri') and sm.uri:
-                # Use absolute_uri to get the full URL before quoting
-                original_uri = sm.absolute_uri
-                encoded_uri = urllib.parse.quote_plus(original_uri)
-                sm.uri = f"/proxy/segment?url={encoded_uri}"
+                sm.uri = rewrite_url(sm.absolute_uri)
 
-    # Handle Keys (EXT-X-KEY)
-    if m3u8_obj.keys:
-        for key in m3u8_obj.keys:
-            if key and hasattr(key, 'uri') and key.uri:
-                original_uri = key.absolute_uri
-                encoded_uri = urllib.parse.quote_plus(original_uri)
-                key.uri = f"/proxy/segment?url={encoded_uri}"
+    for key in m3u8_obj.keys:
+        if key and hasattr(key, 'uri') and key.uri:
+            key.uri = rewrite_url(key.absolute_uri)
 
-    # Handle Segments
     for segment in m3u8_obj.segments:
-        original_uri = segment.absolute_uri
-        encoded_uri = urllib.parse.quote_plus(original_uri)
-        segment.uri = f"/proxy/segment?url={encoded_uri}"
+        segment.uri = rewrite_url(segment.absolute_uri)
+        if segment.init_section:
+            segment.init_section.uri = rewrite_url(segment.init_section.absolute_uri)
+    
+    # Low-latency HLS tags
+    if hasattr(m3u8_obj, 'preload_hints'):
+        for hint in m3u8_obj.preload_hints:
+            if hasattr(hint, 'uri') and hint.uri:
+                hint.uri = rewrite_url(hint.absolute_uri)
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
 
 @app.get("/proxy/manifest/{video_id}")
 async def proxy_manifest(video_id: str, request: Request):
