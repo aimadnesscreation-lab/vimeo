@@ -55,16 +55,24 @@ async def extract_vimeo(url: str):
             
             # 1. Try to find a master manifest (usually protocol is m3u8_native and no specific resolution)
             for f in formats:
-                if f.get('protocol') == 'm3u8_native' and f.get('vcodec') != 'none' and f.get('acodec') != 'none':
-                    # This is likely a combined master manifest
-                    hls_url = f.get('url')
-                    if 'master.m3u8' in hls_url or 'manifest.m3u8' in hls_url:
+                if f.get('protocol') == 'm3u8_native' or 'm3u8' in f.get('url', ''):
+                    # For Vimeo, the master manifest is often in 'manifest_url'
+                    if f.get('manifest_url'):
+                        hls_url = f.get('manifest_url')
                         break
+                    
+                    if f.get('vcodec') != 'none' and f.get('acodec') != 'none':
+                        hls_url = f.get('url')
+                        if 'master.m3u8' in hls_url or 'manifest.m3u8' in hls_url or 'playlist.m3u8' in hls_url:
+                            break
             
             # 2. Fallback to any HLS format that isn't audio-only
             if not hls_url:
                 for f in formats:
                     if (f.get('protocol') == 'm3u8_native' or 'm3u8' in f.get('url', '')) and f.get('vcodec') != 'none':
+                        if f.get('manifest_url'):
+                            hls_url = f.get('manifest_url')
+                            break
                         hls_url = f.get('url')
                         break
             
