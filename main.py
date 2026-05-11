@@ -23,12 +23,19 @@ app.add_middleware(
 # In production, you might want to use Redis or a cache with TTL
 stream_cache = {}
 
+# Global headers to mimic a browser
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Referer": "https://vimeo.com/"
+}
+
 @app.get("/api/extract")
 async def extract_vimeo(url: str):
     ydl_opts = {
         'format': 'bestvideo+bestaudio/best',
         'quiet': True,
         'no_warnings': True,
+        'user_agent': HEADERS["User-Agent"]
     }
     
     try:
@@ -41,15 +48,16 @@ async def extract_vimeo(url: str):
             for f in formats:
                 if f.get('protocol') == 'm3u8_native' or f.get('ext') == 'mp4' and 'm3u8' in f.get('url', ''):
                     hls_url = f.get('url')
-                    # Prefer manifests with better quality if needed, 
-                    # but usually yt-dlp returns the master playlist
                     break
             
             if not hls_url:
                 raise HTTPException(status_code=404, detail="HLS stream not found")
             
             video_id = info.get('id')
-            stream_cache[video_id] = hls_url
+            stream_cache[video_id] = {
+                "hls_url": hls_url,
+                "original_url": url
+            }
             
             return {
                 "id": video_id,
@@ -61,6 +69,7 @@ async def extract_vimeo(url: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 def rewrite_m3u8(m3u8_obj):
+    # Base rewrite for all types of manifests
     if m3u8_obj.is_variant:
         for playlist in m3u8_obj.playlists:
             original_uri = playlist.absolute_uri
@@ -72,30 +81,44 @@ def rewrite_m3u8(m3u8_obj):
                 original_uri = media.absolute_uri
                 encoded_uri = urllib.parse.quote_plus(original_uri)
                 media.uri = f"/proxy/raw_manifest?url={encoded_uri}"
-    else:
-        # Handle Initialization Segment (EXT-X-MAP)
-        if m3u8_obj.segment_map:
-            # m3u8 library stores it as a single object, but let's be safe
-            maps = m3u8_obj.segment_map if isinstance(m3u8_obj.segment_map, list) else [m3u8_obj.segment_map]
-            for segment_map in maps:
-                if hasattr(segment_map, 'uri') and segment_map.uri:
-                    original_uri = segment_map.absolute_uri
-                    encoded_uri = urllib.parse.quote_plus(original_uri)
-                    segment_map.uri = f"/proxy/segment?url={encoded_uri}"
+    
+    # Always check for segments and map, even in variants just in case
+    # Handle Initialization Segment (EXT-X-MAP)
+    if m3u8_obj.segment_map:
+        maps = m3u8_obj.segment_map if isinstance(m3u8_obj.segment_map, list) else [m3u8_obj.segment_map]
+        for sm in maps:
+            if hasattr(sm, 'uri') and sm.uri:
+                # Use absolute_uri to get the full URL before quoting
+                original_uri = sm.absolute_uri
+                encoded_uri = urllib.parse.quote_plus(original_uri)
+                sm.uri = f"/proxy/segment?url={encoded_uri}"
 
-        for segment in m3u8_obj.segments:
-            original_uri = segment.absolute_uri
-            encoded_uri = urllib.parse.quote_plus(original_uri)
-            segment.uri = f"/proxy/segment?url={encoded_uri}"
+    # Handle Keys (EXT-X-KEY)
+    if m3u8_obj.keys:
+        for key in m3u8_obj.keys:
+            if key and hasattr(key, 'uri') and key.uri:
+                original_uri = key.absolute_uri
+                encoded_uri = urllib.parse.quote_plus(original_uri)
+                key.uri = f"/proxy/segment?url={encoded_uri}"
+
+    # Handle Segments
+    for segment in m3u8_obj.segments:
+        original_uri = segment.absolute_uri
+        encoded_uri = urllib.parse.quote_plus(original_uri)
+        segment.uri = f"/proxy/segment?url={encoded_uri}"
 
 @app.get("/proxy/manifest/{video_id}")
 async def proxy_manifest(video_id: str, request: Request):
-    hls_url = stream_cache.get(video_id)
-    if not hls_url:
+    cached = stream_cache.get(video_id)
+    if not cached:
         raise HTTPException(status_code=404, detail="Stream expired or not found")
     
+    hls_url = cached["hls_url"]
+    headers = HEADERS.copy()
+    headers["Referer"] = cached["original_url"]
+    
     async with httpx.AsyncClient() as client:
-        resp = await client.get(hls_url, follow_redirects=True)
+        resp = await client.get(hls_url, headers=headers, follow_redirects=True)
         if resp.status_code != 200:
             return Response(content=resp.content, status_code=resp.status_code)
         
@@ -108,7 +131,7 @@ async def proxy_manifest(video_id: str, request: Request):
 async def proxy_raw_manifest(url: str, request: Request):
     decoded_url = urllib.parse.unquote(url)
     async with httpx.AsyncClient() as client:
-        resp = await client.get(decoded_url, follow_redirects=True)
+        resp = await client.get(decoded_url, headers=HEADERS, follow_redirects=True)
         if resp.status_code != 200:
             return Response(content=resp.content, status_code=resp.status_code)
         
@@ -123,7 +146,7 @@ async def proxy_segment(url: str):
     
     async def stream_video():
         async with httpx.AsyncClient() as client:
-            async with client.stream("GET", decoded_url, follow_redirects=True) as response:
+            async with client.stream("GET", decoded_url, headers=HEADERS, follow_redirects=True) as response:
                 async for chunk in response.aiter_bytes():
                     yield chunk
 
