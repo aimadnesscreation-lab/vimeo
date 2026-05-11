@@ -37,12 +37,13 @@ async def shutdown_event():
     await http_client.aclose()
 
 @app.get("/api/extract")
-async def extract_vimeo(url: str):
+async def extract_vimeo(url: str, password: Optional[str] = Query(None)):
     ydl_opts = {
         'format': 'bestvideo+bestaudio/best',
         'quiet': True,
         'no_warnings': True,
-        'user_agent': HEADERS["User-Agent"]
+        'user_agent': HEADERS["User-Agent"],
+        'videopassword': password
     }
     
     try:

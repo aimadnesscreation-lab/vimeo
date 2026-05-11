@@ -26,10 +26,15 @@
         }
         .input-group {
             display: flex;
+            flex-direction: column;
             gap: 10px;
             margin-bottom: 20px;
         }
-        input[type="text"] {
+        .row {
+            display: flex;
+            gap: 10px;
+        }
+        input[type="text"], input[type="password"] {
             flex-grow: 1;
             padding: 12px;
             border-radius: 4px;
@@ -84,14 +89,24 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        /* Style for quality selector */
+        .vjs-quality-selector .vjs-menu-button {
+            margin: 0;
+            padding: 0;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Vimeo Proxy Player</h1>
         <div class="input-group">
-            <input type="text" id="vimeo-url" placeholder="Enter Vimeo URL (e.g., https://vimeo.com/12345678)" value="">
-            <button id="load-btn">Load Video</button>
+            <div class="row">
+                <input type="text" id="vimeo-url" placeholder="Enter Vimeo URL (e.g., https://vimeo.com/12345678)" value="">
+            </div>
+            <div class="row">
+                <input type="password" id="vimeo-password" placeholder="Password (Optional)">
+                <button id="load-btn">Load Video</button>
+            </div>
         </div>
         <div class="loader" id="loader"></div>
         <div class="video-container">
@@ -109,10 +124,17 @@
     </div>
 
     <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
+    <script src="https://unpkg.com/videojs-contrib-quality-levels@4.1.0/dist/videojs-contrib-quality-levels.min.js"></script>
+    <script src="https://unpkg.com/videojs-hls-quality-selector@2.0.0/dist/videojs-hls-quality-selector.min.js"></script>
     <script>
         const player = videojs('my-video');
+        player.hlsQualitySelector({
+            displayCurrentQuality: true,
+        });
+
         const loadBtn = document.getElementById('load-btn');
         const urlInput = document.getElementById('vimeo-url');
+        const passwordInput = document.getElementById('vimeo-password');
         const loader = document.getElementById('loader');
         const infoBox = document.getElementById('video-info');
         const titleEl = document.getElementById('video-title');
@@ -120,14 +142,20 @@
 
         loadBtn.addEventListener('click', async () => {
             const url = urlInput.value.trim();
+            const password = passwordInput.value.trim();
             if (!url) return alert('Please enter a Vimeo URL');
 
             loader.style.display = 'block';
             loadBtn.disabled = true;
 
             try {
-                const response = await fetch(`/api/extract?url=${encodeURIComponent(url)}`);
-                if (!response.ok) throw new Error('Failed to extract video');
+                let apiUrl = `/api/extract?url=${encodeURIComponent(url)}`;
+                if (password) {
+                    apiUrl += `&password=${encodeURIComponent(password)}`;
+                }
+
+                const response = await fetch(apiUrl);
+                if (!response.ok) throw new Error('Failed to extract video. Check URL or Password.');
 
                 const data = await response.json();
                 
