@@ -29,6 +29,13 @@ HEADERS = {
     "Referer": "https://vimeo.com/"
 }
 
+# Global HTTPX client for efficiency
+http_client = httpx.AsyncClient(follow_redirects=True, timeout=30.0)
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await http_client.aclose()
+
 @app.get("/api/extract")
 async def extract_vimeo(url: str):
     ydl_opts = {
@@ -124,40 +131,45 @@ async def proxy_manifest(video_id: str, request: Request):
     headers = HEADERS.copy()
     headers["Referer"] = cached["original_url"]
     
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(hls_url, headers=headers, follow_redirects=True)
-        if resp.status_code != 200:
-            return Response(content=resp.content, status_code=resp.status_code)
-        
-        m3u8_obj = m3u8.loads(resp.text, uri=hls_url)
-        rewrite_m3u8(m3u8_obj)
-        
-        return Response(content=m3u8_obj.dumps(), media_type="application/vnd.apple.mpegurl")
+    resp = await http_client.get(hls_url, headers=headers)
+    if resp.status_code != 200:
+        return Response(content=resp.content, status_code=resp.status_code)
+    
+    m3u8_obj = m3u8.loads(resp.text, uri=hls_url)
+    rewrite_m3u8(m3u8_obj)
+    
+    return Response(content=m3u8_obj.dumps(), media_type="application/vnd.apple.mpegurl")
 
 @app.get("/proxy/raw_manifest")
 async def proxy_raw_manifest(url: str, request: Request):
     decoded_url = urllib.parse.unquote(url)
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(decoded_url, headers=HEADERS, follow_redirects=True)
-        if resp.status_code != 200:
-            return Response(content=resp.content, status_code=resp.status_code)
+    resp = await http_client.get(decoded_url, headers=HEADERS)
+    if resp.status_code != 200:
+        return Response(content=resp.content, status_code=resp.status_code)
+    
+    m3u8_obj = m3u8.loads(resp.text, uri=decoded_url)
+    rewrite_m3u8(m3u8_obj)
         
-        m3u8_obj = m3u8.loads(resp.text, uri=decoded_url)
-        rewrite_m3u8(m3u8_obj)
-            
-        return Response(content=m3u8_obj.dumps(), media_type="application/vnd.apple.mpegurl")
+    return Response(content=m3u8_obj.dumps(), media_type="application/vnd.apple.mpegurl")
 
 @app.get("/proxy/segment")
 async def proxy_segment(url: str):
     decoded_url = urllib.parse.unquote(url)
     
-    async def stream_video():
-        async with httpx.AsyncClient() as client:
-            async with client.stream("GET", decoded_url, headers=HEADERS, follow_redirects=True) as response:
-                async for chunk in response.aiter_bytes():
-                    yield chunk
-
-    return StreamingResponse(stream_video(), media_type="video/MP2T")
+    # We use a stream request to forward headers and data efficiently
+    request = http_client.build_request("GET", decoded_url, headers=HEADERS)
+    response = await http_client.send(request, stream=True)
+    
+    # Filter headers to avoid conflicts
+    excluded_headers = ["content-encoding", "content-length", "transfer-encoding", "connection"]
+    headers = {k: v for k, v in response.headers.items() if k.lower() not in excluded_headers}
+    
+    return StreamingResponse(
+        response.aiter_bytes(),
+        status_code=response.status_code,
+        headers=headers,
+        media_type=response.headers.get("Content-Type")
+    )
 
 # Static files for the frontend
 if os.path.exists("static"):
